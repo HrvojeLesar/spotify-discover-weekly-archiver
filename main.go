@@ -13,78 +13,93 @@ import (
 )
 
 const host = "localhost"
+const discover_weekly_playlist_name = "Discover Weekly"
 
-var (
-    state = "amazinglysecurestate"
-	ch = make(chan *spotify.Client)
-
-)
-
-func makeSpotifyAuth() *spotifyauth.Authenticator {
-	port := os.Getenv("DWSPort")
-    redirectURI := fmt.Sprintf("http://%s:%s/callback", host, port)
-	return spotifyauth.New(
-		spotifyauth.WithRedirectURL(redirectURI),
-		spotifyauth.WithScopes(
-            spotifyauth.ScopeUserLibraryRead,
-            spotifyauth.ScopePlaylistReadPrivate,
-            spotifyauth.ScopeUserReadPrivate))
+type SpotifyClient struct {
+	host          string
+	state         string
+	port          string
+	channel       chan *spotify.Client
+	client        *spotify.Client
+	authenticator *spotifyauth.Authenticator
 }
 
-func makeHttpServer() {
-	http.HandleFunc("/callback", completeAuth)
+func newSpotifyClient() *SpotifyClient {
+	c := &SpotifyClient{
+		host:          "localhost",
+		state:         "amazinglysecurestate",
+		port:          os.Getenv("DWSPort"),
+		channel:       make(chan *spotify.Client),
+		client:        nil,
+		authenticator: nil,
+	}
+
+	c.newAuthenticatorWithScopes()
+	c.startAuth()
+
+	return c
+}
+
+func (sc *SpotifyClient) newAuthenticatorWithScopes() {
+	redirectURI := fmt.Sprintf("http://%s:%s/callback", sc.host, sc.port)
+	sc.authenticator = spotifyauth.New(
+		spotifyauth.WithRedirectURL(redirectURI),
+		spotifyauth.WithScopes(
+			spotifyauth.ScopeUserLibraryRead,
+			spotifyauth.ScopePlaylistReadPrivate,
+			spotifyauth.ScopeUserReadPrivate))
+}
+
+func (sc *SpotifyClient) startAuth() {
+	http.HandleFunc("/callback", sc.completeAuth)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Println("Got request for:", r.URL.String())
 	})
 
 	go func() {
-		port := os.Getenv("DWSPort")
-		address := fmt.Sprintf("%s:%s", host, port)
+		address := fmt.Sprintf("%s:%s", sc.host, sc.port)
 		err := http.ListenAndServe(address, nil)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}()
 
-	auth := makeSpotifyAuth()
-	url := auth.AuthURL(state)
-	fmt.Println("Log in to spotify by visiting: ", url)
+	fmt.Println("Log in to spotify by visiting: ", sc.authenticator.AuthURL(sc.state))
 
-	client := <-ch
+	<-sc.channel
 
-    user, err := client.CurrentUser(context.Background())
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println("You are logged in as:", user.DisplayName)
+	user, err := sc.client.CurrentUser(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("You are logged in as:", user.DisplayName)
 
-    playlists, err := client.CurrentUsersPlaylists(context.Background())
-    if err != nil {
-        log.Fatal(err)
-    }
+	playlists, err := sc.client.CurrentUsersPlaylists(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    for _, playlist := range playlists.Playlists {
-        fmt.Println("-----------------------")
-        fmt.Println("Name:", playlist.Name)
-        fmt.Println("Owner:", playlist.Owner)
-    }
+	for _, playlist := range playlists.Playlists {
+		fmt.Println("-----------------------")
+		fmt.Println("Name:", playlist.Name)
+		fmt.Println("Owner:", playlist.Owner.ID)
+	}
 }
 
-func completeAuth(w http.ResponseWriter, r *http.Request) {
-    auth := makeSpotifyAuth()
-    token, err := auth.Token(r.Context(), state, r)
-    if err != nil {
-        http.Error(w, "Couldn't get token", http.StatusForbidden)
-        log.Fatal(err)
-    }
-    if st := r.FormValue("state"); st != state {
-        http.NotFound(w, r)
-        log.Fatalf("State mismatch: %s != %s\n", st, state)
-    }
+func (sc *SpotifyClient) completeAuth(w http.ResponseWriter, r *http.Request) {
+	token, err := sc.authenticator.Token(r.Context(), sc.state, r)
+	if err != nil {
+		http.Error(w, "Couldn't get token", http.StatusForbidden)
+		log.Fatal(err)
+	}
+	if st := r.FormValue("state"); st != sc.state {
+		http.NotFound(w, r)
+		log.Fatalf("State mismatch: %s != %s\n", st, sc.state)
+	}
 
-    client := spotify.New(auth.Client(r.Context(), token))
-    fmt.Fprintf(w, "Login completed")
-    ch <- client
+	sc.client = spotify.New(sc.authenticator.Client(r.Context(), token))
+	fmt.Fprintf(w, "Login completed")
+	sc.channel <- sc.client
 }
 
 func main() {
@@ -92,5 +107,6 @@ func main() {
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
-    makeHttpServer()
+
+	newSpotifyClient()
 }
