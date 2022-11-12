@@ -6,38 +6,43 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 
 	"github.com/joho/godotenv"
 	"github.com/zmb3/spotify/v2"
 	"github.com/zmb3/spotify/v2/auth"
 )
 
-// find discover weekly playlist
 // try to find playlist by name, same songs
 // make playlist from discover weekly if not found
 
 const DISCOVER_WEEKLY_PLAYLIST_NAME = "Discover Weekly"
 const DISCOVER_WEEKLY_PLAYLIST_OWNER_ID = "spotify"
+const DISCOVER_WEEKLY_PLAYLIST_TRACKS = 30
 
 type SpotifyClient struct {
-	host          string
-	state         string
-	port          string
-	channel       chan *spotify.Client
-	client        *spotify.Client
-	authenticator *spotifyauth.Authenticator
-	ctx           context.Context
+	host                          string
+	state                         string
+	port                          string
+	channel                       chan *spotify.Client
+	client                        *spotify.Client
+	authenticator                 *spotifyauth.Authenticator
+	ctx                           context.Context
+	currentDiscoverWeeklyPlaylist *spotify.SimplePlaylist
+	currentDiscoverWeeklyTracks   *spotify.PlaylistTrackPage
 }
 
 func newSpotifyClient() *SpotifyClient {
 	c := &SpotifyClient{
-		host:          "localhost",
-		state:         "amazinglysecurestate",
-		port:          os.Getenv("DWSPort"),
-		channel:       make(chan *spotify.Client),
-		client:        nil,
-		authenticator: nil,
-		ctx:           context.Background(),
+		host:                          "localhost",
+		state:                         "amazinglysecurestate",
+		port:                          os.Getenv("DWSPort"),
+		channel:                       make(chan *spotify.Client),
+		client:                        nil,
+		authenticator:                 nil,
+		ctx:                           context.Background(),
+		currentDiscoverWeeklyPlaylist: nil,
+		currentDiscoverWeeklyTracks:   nil,
 	}
 
 	c.newAuthenticatorWithScopes()
@@ -80,15 +85,12 @@ func (sc *SpotifyClient) startAuth() {
 	}
 	fmt.Println("You are logged in as:", user.DisplayName)
 
-	playlists, err := sc.client.CurrentUsersPlaylists(sc.ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for _, playlist := range playlists.Playlists {
-		fmt.Println("-----------------------")
-		fmt.Println("Name:", playlist.Name)
-		fmt.Println("Owner:", playlist.Owner.ID)
+	// finds if already archived
+	sc.findDiscoverWeekly()
+	if sc.isDWNotArchived() {
+		log.Println("Not archived")
+	} else {
+		log.Println("Archived")
 	}
 }
 
@@ -108,34 +110,41 @@ func (sc *SpotifyClient) completeAuth(w http.ResponseWriter, r *http.Request) {
 	sc.channel <- sc.client
 }
 
-func (sc *SpotifyClient) findDiscoverWeekly() *spotify.SimplePlaylist {
+func (sc *SpotifyClient) findDiscoverWeekly() {
 	playlists, err := sc.client.CurrentUsersPlaylists(sc.ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	discoverWeekly := getDiscoverWeeklyPlaylistFromPlaylists(playlists)
-    if discoverWeekly == nil {
-        for page := 1; ; page++ {
-            discoverWeekly = getDiscoverWeeklyPlaylistFromPlaylists(playlists)
-            if discoverWeekly != nil {
-                break
-            }
-            err = sc.client.NextPage(sc.ctx, playlists)
-            if err == spotify.ErrNoMorePages {
-                break
-            }
-            if err != nil {
-                log.Fatal(err)
-            }
-        }
-    }
+	if discoverWeekly == nil {
+		for page := 1; ; page++ {
+			discoverWeekly = getDiscoverWeeklyPlaylistFromPlaylists(playlists)
+			if discoverWeekly != nil {
+				break
+			}
+			err = sc.client.NextPage(sc.ctx, playlists)
+			if err == spotify.ErrNoMorePages {
+				break
+			}
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
 
-    if discoverWeekly == nil {
-        log.Fatal("Failed to find discover weekly playlist.")
-    }
+	if discoverWeekly == nil {
+		log.Fatal("Failed to find discover weekly playlist.")
+	}
 
-    return discoverWeekly
+	sc.currentDiscoverWeeklyPlaylist = discoverWeekly
+
+	tracks, err := sc.client.GetPlaylistTracks(sc.ctx, sc.currentDiscoverWeeklyPlaylist.ID, spotify.Limit(30))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sc.currentDiscoverWeeklyTracks = tracks
 }
 
 func getDiscoverWeeklyPlaylistFromPlaylists(playlists *spotify.SimplePlaylistPage) *spotify.SimplePlaylist {
@@ -146,6 +155,57 @@ func getDiscoverWeeklyPlaylistFromPlaylists(playlists *spotify.SimplePlaylistPag
 		}
 	}
 	return nil
+}
+
+func (sc *SpotifyClient) isDWNotArchived() bool {
+	if sc.currentDiscoverWeeklyPlaylist == nil {
+		log.Fatal("There is no current discover weekly playlist")
+	}
+	playlists, err := sc.client.CurrentUsersPlaylists(sc.ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sortedDWTracks := make([]spotify.PlaylistTrack, 30)
+	copy(sortedDWTracks, sc.currentDiscoverWeeklyTracks.Tracks)
+	sort.Slice(sortedDWTracks[:], func(i, j int) bool {
+		return sortedDWTracks[i].Track.ID > sortedDWTracks[j].Track.ID
+	})
+
+	for page := 1; ; page++ {
+		for _, playlist := range playlists.Playlists {
+			if (playlist.Name == DISCOVER_WEEKLY_PLAYLIST_NAME &&
+				playlist.Owner.ID == DISCOVER_WEEKLY_PLAYLIST_OWNER_ID) ||
+				playlist.Tracks.Total != DISCOVER_WEEKLY_PLAYLIST_TRACKS {
+				continue
+			}
+
+			tracks, err := sc.client.GetPlaylistTracks(sc.ctx, sc.currentDiscoverWeeklyPlaylist.ID, spotify.Limit(30))
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			sort.Slice(tracks.Tracks[:], func(i, j int) bool {
+				return tracks.Tracks[i].Track.ID > tracks.Tracks[j].Track.ID
+			})
+
+			for i := 0; i < 30; i++ {
+				if sortedDWTracks[i].Track.ID != tracks.Tracks[i].Track.ID {
+					break
+				}
+				return false
+			}
+		}
+		err = sc.client.NextPage(sc.ctx, playlists)
+		if err == spotify.ErrNoMorePages {
+			break
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	return true
 }
 
 func main() {
