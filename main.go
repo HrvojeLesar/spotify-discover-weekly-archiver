@@ -12,8 +12,12 @@ import (
 	"github.com/zmb3/spotify/v2/auth"
 )
 
-const host = "localhost"
-const discover_weekly_playlist_name = "Discover Weekly"
+// find discover weekly playlist
+// try to find playlist by name, same songs
+// make playlist from discover weekly if not found
+
+const DISCOVER_WEEKLY_PLAYLIST_NAME = "Discover Weekly"
+const DISCOVER_WEEKLY_PLAYLIST_OWNER_ID = "spotify"
 
 type SpotifyClient struct {
 	host          string
@@ -22,6 +26,7 @@ type SpotifyClient struct {
 	channel       chan *spotify.Client
 	client        *spotify.Client
 	authenticator *spotifyauth.Authenticator
+	ctx           context.Context
 }
 
 func newSpotifyClient() *SpotifyClient {
@@ -32,6 +37,7 @@ func newSpotifyClient() *SpotifyClient {
 		channel:       make(chan *spotify.Client),
 		client:        nil,
 		authenticator: nil,
+		ctx:           context.Background(),
 	}
 
 	c.newAuthenticatorWithScopes()
@@ -68,13 +74,13 @@ func (sc *SpotifyClient) startAuth() {
 
 	<-sc.channel
 
-	user, err := sc.client.CurrentUser(context.Background())
+	user, err := sc.client.CurrentUser(sc.ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println("You are logged in as:", user.DisplayName)
 
-	playlists, err := sc.client.CurrentUsersPlaylists(context.Background())
+	playlists, err := sc.client.CurrentUsersPlaylists(sc.ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -102,11 +108,52 @@ func (sc *SpotifyClient) completeAuth(w http.ResponseWriter, r *http.Request) {
 	sc.channel <- sc.client
 }
 
+func (sc *SpotifyClient) findDiscoverWeekly() *spotify.SimplePlaylist {
+	playlists, err := sc.client.CurrentUsersPlaylists(sc.ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	discoverWeekly := getDiscoverWeeklyPlaylistFromPlaylists(playlists)
+    if discoverWeekly == nil {
+        for page := 1; ; page++ {
+            discoverWeekly = getDiscoverWeeklyPlaylistFromPlaylists(playlists)
+            if discoverWeekly != nil {
+                break
+            }
+            err = sc.client.NextPage(sc.ctx, playlists)
+            if err == spotify.ErrNoMorePages {
+                break
+            }
+            if err != nil {
+                log.Fatal(err)
+            }
+        }
+    }
+
+    if discoverWeekly == nil {
+        log.Fatal("Failed to find discover weekly playlist.")
+    }
+
+    return discoverWeekly
+}
+
+func getDiscoverWeeklyPlaylistFromPlaylists(playlists *spotify.SimplePlaylistPage) *spotify.SimplePlaylist {
+	for _, playlist := range playlists.Playlists {
+		if playlist.Name == DISCOVER_WEEKLY_PLAYLIST_NAME &&
+			playlist.Owner.ID == DISCOVER_WEEKLY_PLAYLIST_OWNER_ID {
+			return &playlist
+		}
+	}
+	return nil
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
 
+	// spotifyClient := newSpotifyClient()
 	newSpotifyClient()
 }
