@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/zmb3/spotify/v2"
@@ -20,29 +21,37 @@ const DISCOVER_WEEKLY_PLAYLIST_NAME = "Discover Weekly"
 const DISCOVER_WEEKLY_PLAYLIST_OWNER_ID = "spotify"
 const DISCOVER_WEEKLY_PLAYLIST_TRACKS = 30
 
-type SpotifyClient struct {
-	host                          string
-	state                         string
-	port                          string
-	channel                       chan *spotify.Client
-	client                        *spotify.Client
-	authenticator                 *spotifyauth.Authenticator
-	ctx                           context.Context
+type Cache struct {
 	currentDiscoverWeeklyPlaylist *spotify.SimplePlaylist
 	currentDiscoverWeeklyTracks   *spotify.PlaylistTrackPage
+	currentUser                   *spotify.PrivateUser
+}
+
+type SpotifyClient struct {
+	host          string
+	state         string
+	port          string
+	channel       chan *spotify.Client
+	client        *spotify.Client
+	authenticator *spotifyauth.Authenticator
+	ctx           context.Context
+	cache         Cache
 }
 
 func newSpotifyClient() *SpotifyClient {
 	c := &SpotifyClient{
-		host:                          "localhost",
-		state:                         "amazinglysecurestate",
-		port:                          os.Getenv("DWSPort"),
-		channel:                       make(chan *spotify.Client),
-		client:                        nil,
-		authenticator:                 nil,
-		ctx:                           context.Background(),
-		currentDiscoverWeeklyPlaylist: nil,
-		currentDiscoverWeeklyTracks:   nil,
+		host:          "localhost",
+		state:         "amazinglysecurestate",
+		port:          os.Getenv("DWSPort"),
+		channel:       make(chan *spotify.Client),
+		client:        nil,
+		authenticator: nil,
+		ctx:           context.Background(),
+		cache: Cache{
+			currentDiscoverWeeklyTracks:   nil,
+			currentDiscoverWeeklyPlaylist: nil,
+			currentUser:                   nil,
+		},
 	}
 
 	c.newAuthenticatorWithScopes()
@@ -56,9 +65,9 @@ func (sc *SpotifyClient) newAuthenticatorWithScopes() {
 	sc.authenticator = spotifyauth.New(
 		spotifyauth.WithRedirectURL(redirectURI),
 		spotifyauth.WithScopes(
-			spotifyauth.ScopeUserLibraryRead,
 			spotifyauth.ScopePlaylistReadPrivate,
-			spotifyauth.ScopeUserReadPrivate))
+			spotifyauth.ScopePlaylistModifyPublic,
+			spotifyauth.ScopePlaylistModifyPrivate))
 }
 
 func (sc *SpotifyClient) startAuth() {
@@ -85,12 +94,15 @@ func (sc *SpotifyClient) startAuth() {
 	}
 	fmt.Println("You are logged in as:", user.DisplayName)
 
+	sc.cache.currentUser = user
+
 	// finds if already archived
 	sc.findDiscoverWeekly()
 	if sc.isDWNotArchived() {
-		log.Println("Not archived")
+		log.Println("Not archived. Archiving...")
+        sc.archivePlaylist()
 	} else {
-		log.Println("Archived")
+		log.Println("Already archived.")
 	}
 }
 
@@ -137,14 +149,14 @@ func (sc *SpotifyClient) findDiscoverWeekly() {
 		log.Fatal("Failed to find discover weekly playlist.")
 	}
 
-	sc.currentDiscoverWeeklyPlaylist = discoverWeekly
+	sc.cache.currentDiscoverWeeklyPlaylist = discoverWeekly
 
-	tracks, err := sc.client.GetPlaylistTracks(sc.ctx, sc.currentDiscoverWeeklyPlaylist.ID, spotify.Limit(30))
+	tracks, err := sc.client.GetPlaylistTracks(sc.ctx, sc.cache.currentDiscoverWeeklyPlaylist.ID, spotify.Limit(30))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	sc.currentDiscoverWeeklyTracks = tracks
+	sc.cache.currentDiscoverWeeklyTracks = tracks
 }
 
 func getDiscoverWeeklyPlaylistFromPlaylists(playlists *spotify.SimplePlaylistPage) *spotify.SimplePlaylist {
@@ -158,7 +170,7 @@ func getDiscoverWeeklyPlaylistFromPlaylists(playlists *spotify.SimplePlaylistPag
 }
 
 func (sc *SpotifyClient) isDWNotArchived() bool {
-	if sc.currentDiscoverWeeklyPlaylist == nil {
+	if sc.cache.currentDiscoverWeeklyPlaylist == nil {
 		log.Fatal("There is no current discover weekly playlist")
 	}
 	playlists, err := sc.client.CurrentUsersPlaylists(sc.ctx)
@@ -167,7 +179,7 @@ func (sc *SpotifyClient) isDWNotArchived() bool {
 	}
 
 	sortedDWTracks := make([]spotify.PlaylistTrack, 30)
-	copy(sortedDWTracks, sc.currentDiscoverWeeklyTracks.Tracks)
+	copy(sortedDWTracks, sc.cache.currentDiscoverWeeklyTracks.Tracks)
 	sort.Slice(sortedDWTracks[:], func(i, j int) bool {
 		return sortedDWTracks[i].Track.ID > sortedDWTracks[j].Track.ID
 	})
@@ -180,7 +192,7 @@ func (sc *SpotifyClient) isDWNotArchived() bool {
 				continue
 			}
 
-			tracks, err := sc.client.GetPlaylistTracks(sc.ctx, sc.currentDiscoverWeeklyPlaylist.ID, spotify.Limit(30))
+			tracks, err := sc.client.GetPlaylistTracks(sc.ctx, sc.cache.currentDiscoverWeeklyPlaylist.ID, spotify.Limit(30))
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -206,6 +218,25 @@ func (sc *SpotifyClient) isDWNotArchived() bool {
 	}
 
 	return true
+}
+
+func (sc *SpotifyClient) archivePlaylist() {
+    dt := time.Now()
+    archivePlaylistName := dt.Format("02-01-06") + " DW"
+    playlist, err := sc.client.CreatePlaylistForUser(sc.ctx, sc.cache.currentUser.ID, archivePlaylistName, "", false, false)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+    trackIds := make([]spotify.ID, 30)
+    for i, track := range sc.cache.currentDiscoverWeeklyTracks.Tracks {
+        trackIds[i] = track.Track.ID
+    }
+
+    _, err = sc.client.AddTracksToPlaylist(sc.ctx, playlist.ID, trackIds...)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func main() {
