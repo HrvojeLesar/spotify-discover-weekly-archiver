@@ -43,12 +43,12 @@ func newSpotifyClient() *SpotifyClient {
 	}
 	state, set := os.LookupEnv("DWSState")
 	if set == false {
-		host = "amazinglysecurestate"
+		state = "amazinglysecurestate"
 	}
 
 	port, set := os.LookupEnv("DWSPort")
 	if set == false {
-		host = "4862"
+		port = "4862"
 	}
 
 	c := &SpotifyClient{
