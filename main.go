@@ -15,9 +15,6 @@ import (
 	"github.com/zmb3/spotify/v2/auth"
 )
 
-// try to find playlist by name, same songs
-// make playlist from discover weekly if not found
-
 const DISCOVER_WEEKLY_PLAYLIST_NAME = "Discover Weekly"
 const DISCOVER_WEEKLY_PLAYLIST_OWNER_ID = "spotify"
 const DISCOVER_WEEKLY_PLAYLIST_TRACKS = 30
@@ -40,10 +37,24 @@ type SpotifyClient struct {
 }
 
 func newSpotifyClient() *SpotifyClient {
+	host, set := os.LookupEnv("DWSHost")
+	if set == false {
+		host = "localhost"
+	}
+	state, set := os.LookupEnv("DWSState")
+	if set == false {
+		host = "amazinglysecurestate"
+	}
+
+	port, set := os.LookupEnv("DWSPort")
+	if set == false {
+		host = "4862"
+	}
+
 	c := &SpotifyClient{
-		host:          "localhost",
-		state:         "amazinglysecurestate",
-		port:          os.Getenv("DWSPort"),
+		host:          host,
+		state:         state,
+		port:          port,
 		channel:       make(chan *spotify.Client),
 		client:        nil,
 		authenticator: nil,
