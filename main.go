@@ -74,6 +74,9 @@ func newSpotifyClient() *SpotifyClient {
 
 func (sc *SpotifyClient) newAuthenticatorWithScopes() {
 	redirectURI := fmt.Sprintf("http://%s:%s/callback", sc.host, sc.port)
+    if sc.host != "localhost" {
+	    redirectURI = fmt.Sprintf("https://%s/callback", sc.host)
+    }
 	sc.authenticator = spotifyauth.New(
 		spotifyauth.WithRedirectURL(redirectURI),
 		spotifyauth.WithScopes(
@@ -89,11 +92,12 @@ func (sc *SpotifyClient) startAuth() {
 	})
 
 	go func() {
-		address := fmt.Sprintf("%s:%s", sc.host, sc.port)
+		address := fmt.Sprintf("localhost:%s", sc.port)
 		err := http.ListenAndServe(address, nil)
 		if err != nil {
 			log.Fatal(err)
 		}
+        log.Printf("Started server on localhost:%s", sc.port)
 	}()
 
 	fmt.Println("Log in to spotify by visiting: ", sc.authenticator.AuthURL(sc.state))
