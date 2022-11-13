@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/go-co-op/gocron"
 	"github.com/joho/godotenv"
 	"github.com/zmb3/spotify/v2"
 	"github.com/zmb3/spotify/v2/auth"
@@ -95,15 +96,7 @@ func (sc *SpotifyClient) startAuth() {
 	fmt.Println("You are logged in as:", user.DisplayName)
 
 	sc.cache.currentUser = user
-
-	// finds if already archived
-	sc.findDiscoverWeekly()
-	if sc.isDWNotArchived() {
-		log.Println("Not archived. Archiving...")
-        sc.archivePlaylist()
-	} else {
-		log.Println("Already archived.")
-	}
+	sc.doArchivingTask()
 }
 
 func (sc *SpotifyClient) completeAuth(w http.ResponseWriter, r *http.Request) {
@@ -221,21 +214,31 @@ func (sc *SpotifyClient) isDWNotArchived() bool {
 }
 
 func (sc *SpotifyClient) archivePlaylist() {
-    dt := time.Now()
-    archivePlaylistName := dt.Format("02-01-06") + " DW"
-    playlist, err := sc.client.CreatePlaylistForUser(sc.ctx, sc.cache.currentUser.ID, archivePlaylistName, "", false, false)
+	dt := time.Now()
+	archivePlaylistName := dt.Format("02-01-06") + " DW"
+	playlist, err := sc.client.CreatePlaylistForUser(sc.ctx, sc.cache.currentUser.ID, archivePlaylistName, "", false, false)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-    trackIds := make([]spotify.ID, 30)
-    for i, track := range sc.cache.currentDiscoverWeeklyTracks.Tracks {
-        trackIds[i] = track.Track.ID
-    }
+	trackIds := make([]spotify.ID, 30)
+	for i, track := range sc.cache.currentDiscoverWeeklyTracks.Tracks {
+		trackIds[i] = track.Track.ID
+	}
 
-    _, err = sc.client.AddTracksToPlaylist(sc.ctx, playlist.ID, trackIds...)
+	_, err = sc.client.AddTracksToPlaylist(sc.ctx, playlist.ID, trackIds...)
 	if err != nil {
 		log.Fatal(err)
+	}
+}
+
+func (sc *SpotifyClient) doArchivingTask() {
+	sc.findDiscoverWeekly()
+	if sc.isDWNotArchived() {
+		log.Println("Not archived. Archiving...")
+		sc.archivePlaylist()
+	} else {
+		log.Println("Already archived.")
 	}
 }
 
@@ -245,6 +248,9 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
-	// spotifyClient := newSpotifyClient()
-	newSpotifyClient()
+	spotifyClient := newSpotifyClient()
+
+	scheduler := gocron.NewScheduler(time.UTC)
+	scheduler.Every(1).Week().Monday().At("02:00").StartImmediately().Do(spotifyClient.doArchivingTask)
+	scheduler.StartBlocking()
 }
