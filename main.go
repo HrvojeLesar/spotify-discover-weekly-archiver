@@ -200,7 +200,7 @@ func (sc *SpotifyClient) isDWNotArchived() bool {
 				continue
 			}
 
-			tracks, err := sc.client.GetPlaylistTracks(sc.ctx, sc.cache.currentDiscoverWeeklyPlaylist.ID, spotify.Limit(30))
+			tracks, err := sc.client.GetPlaylistTracks(sc.ctx, playlist.ID, spotify.Limit(30))
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -266,6 +266,6 @@ func main() {
 	spotifyClient := newSpotifyClient()
 
 	scheduler := gocron.NewScheduler(time.UTC)
-	scheduler.Every(1).Week().Monday().At("02:00").StartImmediately().Do(spotifyClient.doArchivingTask)
+	scheduler.Every(1).Week().Monday().At("02:00").Do(spotifyClient.doArchivingTask)
 	scheduler.StartBlocking()
 }
