@@ -1,12 +1,7 @@
-#### Env variables
+### Env variables
 
-Required:
+**Required** (note variable prefix is `spoiPy` not `spotiFy`):
 
-- **SPOTIFY_ID**: Spotify application id.
-- **SPOTIFY_SECRET**: Spotify application secret.
-
-Optional:
-
-- **DWSPort**: Defaults to `4862`.
-- **DWSHost**: Defaults to `localhost`.
-- **DWSState**
+- **SPOTIPY_CLIENT_ID**: Spotify application id.
+- **SPOTIPY_CLIENT_SECRET**: Spotify application secret.
+- **SPOTIPY_REDIRECT_URI**: Redirect uri
