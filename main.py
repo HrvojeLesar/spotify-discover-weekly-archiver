@@ -15,7 +15,7 @@ class DiscoverWeeklyArchiver():
                 "playlist-modify-public",
                 "playlist-modify-private"
                 ]
-        self.sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=scopes))
+        self.sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=scopes, open_browser=False))
         self.find_discover_weekly_playlist()
         self.get_discover_weekly_tracks()
         if self.is_discover_weekly_archived() == False:
