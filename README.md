@@ -1,6 +1,6 @@
 ### Env variables
 
-**Required** (note variable prefix is `spoiPy` not `spotiFy`):
+**Required**:
 
 - **SPOTIPY_CLIENT_ID**: Spotify application id.
 - **SPOTIPY_CLIENT_SECRET**: Spotify application secret.
